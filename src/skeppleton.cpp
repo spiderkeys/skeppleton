@@ -117,35 +117,83 @@ namespace skep
 {
     struct TSharedData
     {
+        uv_async_t async;
+        uv_mutex_t commandMutex;
+        uv_mutex_t dataMutex;
         
+        int currentCommand;
+        int currentData;
+        
+        TSharedData()
+        {
+            currentCommand = 1;
+            currentData = 0;
+            
+            // Init mutexes
+            uv_mutex_init( &commandMutex );
+            uv_mutex_init( &dataMutex );
+        }
     };
-    
+
     uv_thread_t bgThread;
-    uv_async_t async;
+    
+    // Data shared between worker thread and main thread
+    TSharedData m_shared;
 
 
     void PrintSignal( uv_async_t *handle, int status ) 
     {
-        fprintf(stderr, "Thread signaled step\n" );
+        fprintf(stderr, "Thread signaled update\n" );
+        
+        // Update the command value
+        uv_mutex_lock( &m_shared.dataMutex );
+        fprintf( stderr, "Current Command: %d\n", m_shared.currentCommand );
+        fprintf( stderr, "Current Data: %d\n", m_shared.currentData );
+        uv_mutex_unlock( &m_shared.dataMutex );
+        
     }
 
     void ThreadLoop( void *arg ) 
     {
-        uv_async_t* shared = ((uv_async_t *) arg);
+        // Get shared data pointer
+        TSharedData* shared = ((TSharedData*) arg );
     
-        fprintf( stderr, "Thread running..." );
+        fprintf( stderr, "BG Thread running...\n" );
         
-        int intArg = 10;
+        int command = 1;
         
-        while( intArg > 0 ) 
+        while( true ) 
         {
-            intArg--;
-            sleep(1);
+            // Update command
+            uv_mutex_lock( &shared->commandMutex );
+            command = shared->currentCommand;
+            uv_mutex_unlock( &shared->commandMutex );
             
-            uv_async_send( shared );
+            // Update data
+            uv_mutex_lock( &shared->commandMutex );
+            
+            // Force break if value is 10
+            if( command != 10 )
+            {
+                shared->currentData = command * 10;
+            }
+            else
+            {
+                shared->currentData = 999;
+                break;
+            }
+            
+            uv_mutex_unlock( &shared->commandMutex );
+            
+            // Signal main thread that we did some work
+            uv_async_send( &shared->async );
+            
+            sleep( 1 );
         }
         
-        uv_close((uv_handle_t*)shared, NULL);
+        // Thread is over, close the async watcher on the main thread
+        uv_close( (uv_handle_t*)&shared->async, NULL );
+        
         fprintf( stderr, "BG Thread finished running!\n");
     }
     
@@ -154,14 +202,35 @@ namespace skep
     {
         info.GetReturnValue().Set( Nan::New("Started Thread").ToLocalChecked() );
 
-        uv_async_init( uv_default_loop(), &async, PrintSignal );
+        uv_async_init( uv_default_loop(), &m_shared.async, PrintSignal );
 
-        uv_thread_create(&bgThread, ThreadLoop, &async);
+        uv_thread_create( &bgThread, ThreadLoop, &m_shared );
+    }
+    
+    void SendCommandToThread( const Nan::FunctionCallbackInfo<v8::Value>& info)  
+    {
+        if( info.Length() < 1 ) 
+        {
+            Nan::ThrowTypeError( "Wrong number of arguments!" );
+            return;
+        }
+        
+        if( !info[0]->IsNumber() )
+        {
+            Nan::ThrowTypeError( "Wrong argument type!" );
+            return;
+        }
+        
+        // Update the command value
+        uv_mutex_lock( &m_shared.commandMutex );
+        m_shared.currentCommand = info[0]->NumberValue();;
+        uv_mutex_unlock( &m_shared.commandMutex );
     }
     
     void Init(v8::Local<v8::Object> exports) 
     {
         exports->Set( Nan::New("StartThread").ToLocalChecked(), Nan::New<v8::FunctionTemplate>( StartThread )->GetFunction() );
+        exports->Set( Nan::New("SendCommandToThread").ToLocalChecked(), Nan::New<v8::FunctionTemplate>( SendCommandToThread )->GetFunction() );
     }
     
     NODE_MODULE(skeppleton, Init)

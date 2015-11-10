@@ -1,0 +1,16 @@
+{
+  "name": "skeppleton",
+  "version": "0.0.1",
+  "description": "Skeleton project for creating a C++ addon that runs a background thread",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install": "node-gyp rebuild"
+  },
+  "author": "Charles Cross",
+  "license": "ISC",
+  "gypfile": true,
+  "dependencies": {
+    "nan": "^2.1.0"
+  }
+}
